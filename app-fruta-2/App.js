@@ -12,7 +12,7 @@ import {
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
-// ---------- DATOS: productos de pulpa de fruta ----------
+// ---------- DATOS: productos de pulpa de fruta 2----------
 const PRODUCTOS = [
   { id: '1', title: 'Pulpa de Mango', presentacion: '500g', price: 8000, emoji: '🥭' },
   { id: '2', title: 'Pulpa de Maracuyá', presentacion: '500g', price: 7500, emoji: '🍈' },
