@@ -1,0 +1,28 @@
+{
+  "expo": {
+    "name": "app-fruta-2",
+    "slug": "snack-fa32cee3-1f3b-43d5-a6fc-41167e227d36",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "light",
+     
+    "ios": {
+      "supportsTablet": true
+    },
+    "android": {
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/adaptive-icon.png",
+        "backgroundColor": "#ffffff"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      "expo-status-bar",
+      "expo-font",
+      "expo-splash-screen"
+    ]
+  }
+}
