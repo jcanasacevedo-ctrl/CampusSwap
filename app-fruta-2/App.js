@@ -1,5 +1,7 @@
-import React, { createContext, useContext, useState } from 'react';
+import React, { createContext, useContext, useEffect, useState } from 'react';
 import {
+  ActivityIndicator,
+  Alert,
   FlatList,
   Pressable,
   ScrollView,
@@ -11,16 +13,18 @@ import {
 } from 'react-native';
 import { NavigationContainer } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import {
+  initDB,
+  obtenerProductos,
+  guardarPedido,
+  agregarProducto,
+  eliminarProducto,
+} from './database';
+import { guardarPedidoFirebase } from './firebaseConfig';
 
-// ---------- DATOS: productos de pulpa de fruta 2----------
-const PRODUCTOS = [
-  { id: '1', title: 'Pulpa de Mango', presentacion: '500g', price: 8000, emoji: '🥭' },
-  { id: '2', title: 'Pulpa de Maracuyá', presentacion: '500g', price: 7500, emoji: '🍈' },
-  { id: '3', title: 'Pulpa de Guanábana', presentacion: '500g', price: 9000, emoji: '🍈' },
-  { id: '4', title: 'Pulpa de Mora', presentacion: '500g', price: 7000, emoji: '🫐' },
-  { id: '5', title: 'Pulpa de Fresa', presentacion: '500g', price: 8500, emoji: '🍓' },
-  { id: '6', title: 'Pulpa de Lulo', presentacion: '500g', price: 7800, emoji: '🍋' },
-];
+// Los productos ahora vienen de SQLite (ver database.js)
+const ProductosContext = createContext({ productos: [], recargarProductos: async () => {} });
+const useProductos = () => useContext(ProductosContext);
 
 // ---------- DATOS: categorías (círculos de la pantalla de inicio) ----------
 const CATEGORIAS = [
@@ -152,7 +156,7 @@ function BienvenidaScreen({ navigation }) {
 
       <Text style={styles.bienvenidaPie}>Pulpa de fruta fresca y natural</Text>
 
-      <Pressable onPress={() => navigation.navigate('Lista')}>
+      <Pressable onPress={() => navigation.navigate('Admin')}>
         <Text style={styles.adminLink}>Administrador</Text>
       </Pressable>
     </View>
@@ -170,8 +174,9 @@ function ListaScreen({ navigation }) {
   // tecleo lo actualiza (onChangeText={setBusqueda}).
   // ============================================================
   const [busqueda, setBusqueda] = useState('');
+  const { productos } = useProductos(); // <- vienen de SQLite
 
-  const productosFiltrados = PRODUCTOS.filter((p) =>
+  const productosFiltrados = productos.filter((p) =>
     p.title.toLowerCase().includes(busqueda.toLowerCase())
   );
 
@@ -436,8 +441,21 @@ function CarritoScreen({ navigation }) {
         <BotonAccion
           texto="Confirmar pedido"
           colorFondo="#FF8C42"
-          onPress={() => {
+          onPress={async () => {
+            try {
+              // 1) Guardar en SQLite (local)
+              await guardarPedido(items, total);
+            } catch (e) {
+              console.log('Error SQLite:', e);
+              Alert.alert('Error', 'No se pudo guardar el pedido.');
+              return;
+            }
+            // 2) Enviar a Firebase (nube) sin bloquear la app si falla
+            guardarPedidoFirebase(items, total).catch((e) =>
+              console.log('Error Firebase:', e)
+            );
             vaciarCarrito();
+            Alert.alert('¡Pedido confirmado!', 'Gracias por tu compra.');
             navigation.navigate('Lista');
           }}
         />
@@ -450,12 +468,169 @@ function CarritoScreen({ navigation }) {
 }
 
 // ============================================================
+// PANTALLA: ADMINISTRADOR
+// Formulario para crear productos y lista para eliminarlos.
+// Todo se guarda en SQLite y el catálogo se actualiza solo.
+// ============================================================
+function AdminScreen() {
+  const { productos, recargarProductos } = useProductos();
+  const [nombre, setNombre] = useState('');
+  const [presentacion, setPresentacion] = useState('500g');
+  const [precio, setPrecio] = useState('');
+  const [emoji, setEmoji] = useState('🍹');
+
+  const guardar = async () => {
+    const precioNum = Number(precio.replace(/[^0-9]/g, ''));
+    if (!nombre.trim() || !precioNum) {
+      Alert.alert('Faltan datos', 'Escribe el nombre y un precio válido.');
+      return;
+    }
+    try {
+      await agregarProducto({
+        title: nombre.trim(),
+        presentacion: presentacion.trim() || '500g',
+        price: precioNum,
+        emoji: emoji.trim() || '🍹',
+      });
+      await recargarProductos();
+      setNombre('');
+      setPrecio('');
+      Alert.alert('Listo', 'Producto agregado al catálogo.');
+    } catch (e) {
+      console.log('Error al agregar producto:', e);
+      Alert.alert('Error', 'No se pudo guardar el producto.');
+    }
+  };
+
+  const confirmarEliminar = (item) => {
+    Alert.alert('Eliminar producto', `¿Eliminar "${item.title}"?`, [
+      { text: 'Cancelar', style: 'cancel' },
+      {
+        text: 'Eliminar',
+        style: 'destructive',
+        onPress: async () => {
+          await eliminarProducto(item.id);
+          await recargarProductos();
+        },
+      },
+    ]);
+  };
+
+  return (
+    <FlatList
+      style={{ flex: 1, backgroundColor: '#FFFFFF' }}
+      data={productos}
+      keyExtractor={(item) => item.id}
+      keyboardShouldPersistTaps="handled"
+      ListHeaderComponent={
+        <View style={styles.adminForm}>
+          <Text style={styles.adminTitulo}>Nuevo producto</Text>
+
+          <Text style={styles.adminEtiqueta}>Nombre</Text>
+          <TextInput
+            style={styles.adminInput}
+            value={nombre}
+            onChangeText={setNombre}
+            placeholder="Ej: Pulpa de Piña"
+            placeholderTextColor="#8FA890"
+          />
+
+          <Text style={styles.adminEtiqueta}>Presentación</Text>
+          <TextInput
+            style={styles.adminInput}
+            value={presentacion}
+            onChangeText={setPresentacion}
+            placeholder="Ej: 500g"
+            placeholderTextColor="#8FA890"
+          />
+
+          <Text style={styles.adminEtiqueta}>Precio (COP)</Text>
+          <TextInput
+            style={styles.adminInput}
+            value={precio}
+            onChangeText={setPrecio}
+            placeholder="Ej: 8000"
+            placeholderTextColor="#8FA890"
+            keyboardType="numeric"
+          />
+
+          <Text style={styles.adminEtiqueta}>Emoji</Text>
+          <TextInput
+            style={styles.adminInput}
+            value={emoji}
+            onChangeText={setEmoji}
+            placeholder="🍍"
+            placeholderTextColor="#8FA890"
+          />
+
+          <BotonAccion
+            texto="Guardar producto"
+            colorFondo="#2E9B52"
+            estilo={{ marginTop: 8 }}
+            onPress={guardar}
+          />
+
+          <Text style={[styles.adminTitulo, { marginTop: 24 }]}>
+            Productos ({productos.length})
+          </Text>
+        </View>
+      }
+      renderItem={({ item }) => (
+        <View style={styles.tarjeta}>
+          <View style={styles.tarjetaIcono}>
+            <Text style={styles.tarjetaIconoTexto}>{item.emoji}</Text>
+          </View>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.tarjetaTitulo}>{item.title}</Text>
+            <Text style={styles.tarjetaPresentacion}>
+              {item.presentacion} · ${item.price.toLocaleString('es-CO')}
+            </Text>
+          </View>
+          <Pressable onPress={() => confirmarEliminar(item)}>
+            <Text style={styles.quitarTexto}>Eliminar</Text>
+          </Pressable>
+        </View>
+      )}
+      contentContainerStyle={{ paddingBottom: 30 }}
+    />
+  );
+}
+
+// ============================================================
 // EJERCICIO 3: Stack Navigator con varias pantallas
 // "Bienvenida" (splash) → "Lista" (inicio, sesión 5) → "Detalle"
 // ============================================================
 export default function App() {
+  const [productos, setProductos] = useState([]);
+  const [listo, setListo] = useState(false);
+
+  const recargarProductos = async () => setProductos(await obtenerProductos());
+
+  // Al abrir la app: crea la BD (si no existe), inserta productos y los carga
+  useEffect(() => {
+    (async () => {
+      try {
+        await initDB();
+        await recargarProductos();
+      } catch (e) {
+        console.log('Error al iniciar la BD:', e);
+      } finally {
+        setListo(true);
+      }
+    })();
+  }, []);
+
+  if (!listo) {
+    return (
+      <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', backgroundColor: '#1F3D22' }}>
+        <ActivityIndicator size="large" color="#F4B400" />
+      </View>
+    );
+  }
+
   return (
-    // El Provider envuelve todo para que todas las pantallas compartan el carrito
+    // Los Providers envuelven todo para compartir productos y carrito
+    <ProductosContext.Provider value={{ productos, recargarProductos }}>
     <CarritoProvider>
     <NavigationContainer>
       <Stack.Navigator initialRouteName="Bienvenida">
@@ -470,11 +645,13 @@ export default function App() {
           component={DetalleScreen}
           options={{ title: 'Detalle del producto' }}
         />
+        <Stack.Screen name="Admin" component={AdminScreen} options={{ title: 'Administrador' }} />
         {/* >>> NUEVA PANTALLA: Carrito / Mi pedido <<< */}
         <Stack.Screen name="Carrito" component={CarritoScreen} options={{ title: 'Mi pedido' }} />
       </Stack.Navigator>
     </NavigationContainer>
     </CarritoProvider>
+    </ProductosContext.Provider>
   );
 }
 
@@ -763,6 +940,18 @@ const styles = StyleSheet.create({
     marginTop: 12,
     textDecorationLine: 'underline',
   },
+  // ---------- Admin ----------
+  adminForm: { padding: 16 },
+  adminTitulo: { fontSize: 18, fontWeight: 'bold', color: '#1F3D22', marginBottom: 8 },
+  adminEtiqueta: { fontSize: 13, color: '#5C7A5E', marginTop: 10, marginBottom: 4, fontWeight: '600' },
+  adminInput: {
+    backgroundColor: '#F3FAF0',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    fontSize: 15,
+    color: '#1F3D22',
+  },
   barraLabel: { fontSize: 11, color: '#8A8A8A', marginTop: 2 },
   barraLabelActivo: { color: '#1F7A3D', fontWeight: '700' },
 
@@ -770,9 +959,3 @@ const styles = StyleSheet.create({
 
 
 );
-
-
-
-
-// conexion BD
-
